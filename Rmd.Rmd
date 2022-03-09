@@ -1,0 +1,345 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{rmd setup, include=FALSE}
+# RMarkdown settings
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=5, fig.height=2.5, fig.align="center") 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "")
+
+# required libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(magrittr)) install.packages("magrittr", repos = "http://cran.us.r-project.org")
+if(!require(xfun)) install.packages("xfun", repos = "http://cran.us.r-project.org")
+if(!require(tinytex)) install.packages("tinytex", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(knitr)
+library(magrittr)
+library(xfun)
+library(tinytex)
+```
+
+\vspace*{5cm}
+\begin{center}
+{\Large (HarvardX PH125.9x) \\ Data Science: Capstone }
+\end{center}
+\vspace*{1.5cm}
+\begin{center}
+\thispagestyle{empty}
+{\Huge \bf Capstone Project}\\[1.5cm]
+{\bf \Large Classification of Car Evaluation}\\[1cm]
+{\Large March 2022}\\[1.5cm]
+{\large submitted by Tobias Sveaas} \\[2.5cm]
+\end{center}
+
+
+\newpage
+\tableofcontents
+\newpage
+
+# Introduction
+
+In this project we use machine learning to determine a classification model that predicts whether a car is in an "acceptable" or "unacceptable" condition based on different attributes of the car. As doing this manually can be time consuming.
+
+For this project we determine the effectiveness of the model based on the accuracy of it (% of correct classifications). A decision tree model was the final model used in this project and resulted in an accuracy of 95.1%.
+
+The car data set was collected from the UCI machine learning repository (and can be downloaded via https://archive.ics.uci.edu/ml/machine-learning-databases/car/)
+
+## Load packages and libraries needed in the project
+
+First we install and load in the packages and libraries we will be using for the project
+
+```{r, include = FALSE}
+#Load required packages used in project
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+
+```
+
+```{r libraries, results=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(dplyr)
+library(stringr)
+library(rpart.plot)
+library(randomForest)
+```
+
+\newpage
+# Data cleaning
+
+We load in cars data set and simpilfy the car acceptability classification from "unacceptable", "acceptable", "good" and "Verygood". To just unacceptable and acceptable by combing "acceptable","good" and "Verygood" into just "acceptable". This is to make it a binary problem on determining whether the car is acceptable or unacceptable.
+
+We then split the data into two sets, the edx set (80%) which we will be using to create our model and the final validation set (20%) which we will be using only for the final test of our model.
+
+```{r, include = FALSE}
+# Downloading the car data set
+dl <- tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data", dl)
+
+car_data <- str_split_fixed(readLines(dl), ",", 7)
+colnames(car_data) <- c("buying", "maint", "doors", "persons", "lug_boot", "safety","class")
+car_data <- as.data.frame(car_data)
+
+# Change the class section to just acc and unacc to simplify set
+car_data <- car_data %>%
+  mutate(class = if_else(class == "unacc", "unacc" , "acc"))
+
+
+# Validation set will be 20% of the cars data 
+set.seed(1, sample.kind="Rounding")
+validation_index <- createDataPartition(y = car_data$class, times = 1, p = 0.2, list = FALSE)
+edx <- car_data[-validation_index,]
+validation <- car_data[validation_index,]
+```
+
+# Data Exploration
+
+Exploratory analysis is done on the edx data set to get an overview of the main characteristics of the data set.
+
+```{r, include = FALSE}
+# Explore the edx data set
+dim(edx)
+structure(edx)
+unique(edx$class)
+unique(edx$buying)
+unique(edx$maint)
+unique(edx$doors)
+unique(edx$persons)
+unique(edx$lug_boot)
+unique(edx$safety)
+```
+
+The data set contains 1382 car sample observations with 7 variables.
+The variables feature names, descriptions and classifications are listed below:
+*class: Car acceptability classification (acceptable = acc, unacceptable = unacc), this is our dependent variable and what our model will attempt to predict
+*buying_price: Cost of the car to buy (low, med, high, vhigh)
+*maint_cost: Maintenance cost of the car (low, med, high, vhigh)
+*doors: Number of doors on the car (2,3,4,5 or more)
+*person_capacity: Number of person the car can carry (2, 4, more)
+*lug_boot: The size of the luggage boot (small, med, big)
+*safety: Safety level of the car (low, med, high)
+
+\newpage
+# Data Analysis and Visualisation
+Here we further analyze the data through visualization to explore the relationship each of our variables have with the car acceptability classification
+
+Lets first see the distribution between acceptable and unacceptable cars
+
+```{r, echo=FALSE, warning = FALSE}
+# See ratio of class'
+edx %>% ggplot(aes(x = class)) +
+  geom_histogram(stat = "count") +
+  ggtitle("Car Acceptability Class") +
+  xlab("Class") +
+  ylab("Count") +
+  theme_stata()
+```
+We see that there are more than twice as many unacceptable cars than acceptable cars
+
+## Buying Price
+
+```{r, echo=FALSE, warning = FALSE}
+# Compare buying price and Class
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(buying = factor(buying, levels = c("low", "med", "high", "vhigh"))) %>%
+  ggplot(aes(fill = class, x = buying)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Buying Price and Class") +
+  xlab("Buying Price") +
+  ylab("Count")
+```
+
+We can see a relationship with buying price in that a higher proportion of cars are acceptable at lower prices
+
+## Maintenace Costs
+
+```{r, echo=FALSE, warning = FALSE}
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(maint = factor(maint, levels = c("low", "med", "high", "vhigh"))) %>%
+  ggplot(aes(fill = class, x = maint)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Maintenance Costs and Class") +
+  xlab("Maintenance Costs") +
+  ylab("Count")
+```
+
+We can see that cars with vhigh maintenance costs are less likely to be acceptable but low, med and high are fairly similar
+
+## Number of doors
+
+```{r, echo=FALSE, warning = FALSE}
+# Comparing Doors and Class
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(doors = factor(doors, levels = c("2", "3", "4", "5more"))) %>%
+  ggplot(aes(fill = class, x =doors)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Doors and Class") +
+  xlab("Doors") +
+  ylab("Count")
+```
+
+We don't see much effect the number of doors have on the acceptability of the car.
+
+## Person Capacity
+
+```{r, echo=FALSE, warning = FALSE}
+# Comparing person capacity and Class
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(persons = factor(persons, levels = c("2", "4", "more"))) %>%
+  ggplot(aes(fill = class, x = persons)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Person Capacity and Class") +
+  xlab("Person Capacity") +
+  ylab("Count")
+```
+
+We see that all cars that seat only 2 people are unacceptable with 4 and more being equally acceptable.  So this will likely be an important variable in our prediction model.
+
+## Size of Luggage Boot
+
+```{r, echo=FALSE, warning = FALSE}
+# Comparing Size of boot and Class
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(lug_boot = factor(lug_boot, levels = c("small", "med", "big"))) %>%
+  ggplot(aes(fill = class, x = lug_boot)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Size of Luggage Boot and Class") +
+  xlab("Size of Luggage Boot") +
+  ylab("Count")
+```
+
+We see a slight trend with cars having a larger boot size being more acceptable than cars with a smaller boot size
+
+## Safety Level
+
+```{r, echo=FALSE, warning = FALSE}
+# Comparing Safety Level and Class
+edx %>% mutate(class = factor(class, levels = c("unacc", "acc"))) %>%
+  mutate(safety = factor(safety, levels = c("low", "med", "high"))) %>%
+  ggplot(aes(fill = class, x = safety)) +
+  geom_histogram(position = "stack", stat = "count") +
+  ggtitle("Safety Level and Class") +
+  xlab("Safety Level") +
+  ylab("Count")
+```
+
+We see that all cars with a low safety level being unacceptable and that cars with a higher safety level being more acceptable. So this will likely be an important variable in our prediction model.
+
+\newpage
+# Creating the Prediction Model
+
+After the data analysis I have determined that a decision tree model will be a suitable model for this project. A decision tree is a predictive model that benefits from a number of binary rules to calculate the classification of the desired variable.
+
+Decision trees generate classification models in tree form. This form helps to the understand the decision hierarchy and relations between attributes by visualizing the possible outcomes of each attribute as a branch of a tree.
+
+One of the benefits of the decision tree model is that it is easy to interpret the classification process. However in order to maximize the accuracy of our model we will also try a random forest model, which loses the interpretability of the decision model.
+
+The edx set will be further split into training (80%) and test set (20%) in order to find the best model.
+
+```{r, include = FALSE}
+# Further split the data into a train and test set
+# Test set will be 20% of the edx data
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = edx$class, times = 1, p = 0.2, list = FALSE)
+train_set <- edx[-test_index,]
+test_set <- edx[test_index,]
+```
+
+## Building Decision tree model
+
+USing the rpart and caret package we train the decision tree model using cross validation with 10 folds repeated 3 times.
+
+```{r}
+# Building the decision tree model
+# Do repeated cross validation with 10 folds 3 times
+train_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+# Create the decision tree using train function
+set.seed(1, sample.kind="Rounding")
+decision_tree <- train(class ~ ., data = train_set, method = "rpart",
+                       trControl = train_control,
+                       tuneLength = 10)
+```
+\newpage
+Now we can plot the Decision tree created to visualize the process using the prp function
+
+```{r}
+# Plot the decision tree model
+prp(decision_tree$finalModel, box.palette = "auto",
+    faclen = 0, # print fullt factor names
+    varlen = 0) # write full names in branches
+```
+
+Next we will use our model to predict the test set and examine the confusion matrix.
+```{r}
+# Use the model to predict test set
+test_pred_rpart <- predict(decision_tree, test_set)
+confusionMatrix(test_pred_rpart, as.factor(test_set$class))
+```
+
+We get an accuracy of 95.3% with this model which is very good.
+
+## Random forest model
+
+Lets see if we can get an increase accuracy by building a random forest model. A random forest model consists of a large number of decision trees that operate as an ensemble. Each individual tree in a random forest outputs a class prediction and the class with the most votes becomes our models prediction.
+
+The random forest does lose the interpretability of the single decision tree model but hopefully makes up for it with increased accuracy.
+
+We build the random forest model using the train function tuning it with different mtry (number of variables randomly sampled at each split) and ntrees (number of trees to grow) values.
+
+```{r}
+# Build random forest model
+tunegrid <- expand.grid(mtry = c(1:5), ntrees = c(50,100,150,200))
+set.seed(1, sample.kind="Rounding")
+random_forest <- train(class ~ ., data = train_set, method = "rf",
+                              metric = "Accuracy",
+                              tunegrid = tunegrid,
+                              trControl = train_control)
+```
+
+Test the model on the test set and examine the confusion matrix
+
+```{r}
+# USe random forest model to predict test set
+test_pred_rf <- predict(random_forest, test_set)
+confusionMatrix(test_pred_rf, as.factor(test_set$class))
+```
+
+Our random forest model gets an accuracy of 0.9386 which is less than our decision tree model with the sensitivity (true positive rate) being the most significant decrease from 96.4% to 86.8%
+
+\newpage
+# Results
+
+After determining that the single decision tree model gave us the best results in terms of accuracy we will apply this model to predict our validation set to determine our accuracy.
+
+```{r}
+# Use decision tree model on the validation set
+valid_pred <- predict(decision_tree, validation)
+confusionMatrix(valid_pred, as.factor(validation$class))
+```
+
+An accuracy of 95.1% is achieved.
+
+# Conclusion
+
+THe model described in this report successfully predicts the acceptability of of car with 95.1% accuracy.
+
+The report decision tree model in order to obtain the classification which also has the benefit of being easily interpretable.
+
+Some areas that could have been improved could have been to include more values in the tuning parameter for the random forest method which should net us a model with increased accuracy. Another thing could be to treat some of the variables as ordinal rather than just categorical such as buying price or number of doors to aid the model.
